@@ -291,7 +291,7 @@
         const results = towns.map((town, index) =>
           calculate(town, team.get(town[0]), forecasts[index].value)
         );
-        const { assignments, jobs, mallowRestricted } = assignCrews(results);
+        const { assignments, jobs, mallowRestricted } = assignCrews(results, team);
 
         for (const result of results) {
           const row = body.insertRow();
