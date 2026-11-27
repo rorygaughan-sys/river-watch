@@ -98,7 +98,7 @@
     async function readTeam() {
       const csv = await (await read(sheetUrl)).text();
       const [headers, ...rows] = parseCsv(csv);
-      const required = ["town", "barrier_sets", "flow_override_m3s",
+      const required = ["town", "county", "barrier_sets", "flow_override_m3s",
                         "warning_override", "notes"];
       if (!required.every(header => headers?.includes(header))) {
         throw new Error("Required Team Sheet columns are missing.");
@@ -136,7 +136,35 @@
       };
     }
 
-    function calculate(town, row, forecast) {
+    const warningUrl = "https://www.met.ie/Open_Data/json/warning_IRELAND.json";
+    const countyCodes = {
+      tipperary: "EI26", cork: "EI04", wexford: "EI30", clare: "EI03",
+      westmeath: "EI29", leitrim: "EI14", roscommon: "EI24"
+    };
+
+    async function readWarnings() {
+      const warnings = await (await read(warningUrl)).json();
+      if (!Array.isArray(warnings)) throw new Error("Unexpected warnings feed format.");
+      return { warnings, checkedAt: new Date() };
+    }
+
+    function matchingRainWarnings(row, feed) {
+      const counties = [row.county.trim().toLowerCase()];
+      if (/roscommon/i.test(row.notes)) counties.push("roscommon");
+      const areas = counties.flatMap(county => [county, countyCodes[county]?.toLowerCase()]);
+      const start = feed.checkedAt.getTime();
+      const end = start + 48 * 60 * 60 * 1000;
+      return feed.warnings.filter(warning =>
+        /^(rain|rainfall)$/i.test(warning.type) &&
+        /^(yellow|orange|red)$/i.test(warning.level) &&
+        /^(warning)?$/i.test(warning.status ?? "") &&
+        Array.isArray(warning.regions) &&
+        warning.regions.some(region => areas.includes(String(region).trim().toLowerCase())) &&
+        Date.parse(warning.onset) <= end && Date.parse(warning.expiry) > start
+      );
+    }
+
+    function calculate(town, row, forecast, warningFeed) {
       const [name, , , gauge, p95, p99, readings] = town;
       const working = [
         `OPW gauge ${gauge}, 2016–2025: P95 ${p95}, P99 ${p99} m³/s`,
@@ -160,9 +188,22 @@
       const entered = row.flow_override_m3s.trim();
       const flow = entered ? Number(entered) : forecast?.peak;
       const warning = row.warning_override.trim().toLowerCase();
-      const raised = warning === "orange" || warning === "red";
+      const rehearsalWarning = warning === "orange" || warning === "red";
+      const liveWarnings = warningFeed ? matchingRainWarnings(row, warningFeed) : [];
+      const liveRaise = liveWarnings.some(item => /^(orange|red)$/i.test(item.level));
+      const raised = rehearsalWarning || liveRaise;
 
-      if (raised) working.push(`Google Team Sheet rehearsal warning: ${warning}.`);
+      if (warningFeed) {
+        working.push(`Met Éireann checked at ${warningFeed.checkedAt.toISOString()}.`);
+        if (!liveWarnings.length) working.push("No matching rain warnings in the next 48 hours.");
+        for (const item of liveWarnings) {
+          working.push(`Met Éireann: ${item.level} rain warning, ${item.onset} to ${item.expiry} (${item.regions.join(", ")}).`);
+        }
+      } else {
+        working.push("Met Éireann feed unavailable. Live warning adjustment is unknown.");
+      }
+
+      if (rehearsalWarning) working.push(`Google Team Sheet rehearsal warning: ${warning}.`);
       if (!Number.isFinite(flow) || flow < 0) {
         working.push(entered ? "Invalid Sheet flow override." : "No usable flow value.");
         return { name, working };
@@ -176,8 +217,8 @@
         `Flow used: ${flow} m³/s (${entered ? "rehearsal override from Google Team Sheet" : "forecast peak"})`,
         `Base level: ${levels[base]}. The flow is ${reason}.`,
         raised
-          ? `Rehearsal warning rule: ${levels[base]} → ${levels[level]}.`
-          : "Live Met Éireann warning check pending."
+          ? `${rehearsalWarning ? "Rehearsal" : "Live"} warning rule: ${levels[base]} → ${levels[level]}.`
+          : "No warning uplift applied."
       );
 
       const availableSets = Number(row.barrier_sets);
@@ -258,11 +299,12 @@
       output.textContent = "Reading the Team Sheet and Clonmel forecast…";
 
       try {
-        const [team, forecast] = await Promise.all([
+        const [team, forecast, warningFeed] = await Promise.all([
           readTeam(),
-          readForecast(towns[0]).catch(() => null)
+          readForecast(towns[0]).catch(() => null),
+          readWarnings().catch(() => null)
         ]);
-        const result = calculate(towns[0], team.get("Clonmel"), forecast);
+        const result = calculate(towns[0], team.get("Clonmel"), forecast, warningFeed);
         output.textContent = [
           ...result.working,
           `Draft level: ${levels[result.level] ?? "Undetermined"}`
@@ -284,12 +326,13 @@
       status.textContent = "Reading the Team Sheet and forecasts for eight towns…";
 
       try {
-        const [team, forecasts] = await Promise.all([
+        const [team, forecasts, warningFeed] = await Promise.all([
           readTeam(),
-          Promise.allSettled(towns.map(readForecast))
+          Promise.allSettled(towns.map(readForecast)),
+          readWarnings().catch(() => null)
         ]);
         const results = towns.map((town, index) =>
-          calculate(town, team.get(town[0]), forecasts[index].value)
+          calculate(town, team.get(town[0]), forecasts[index].value, warningFeed)
         );
         const { assignments, jobs, mallowRestricted } = assignCrews(results, team);
 
@@ -308,7 +351,8 @@
         const crews = Object.entries(jobs)
           .map(([crew, assigned]) => `${crew}: ${assigned.join(", ") || "none"}`);
         status.textContent = [
-          "Draft plan. Forecast river matches and live Met Éireann warnings still need checking.",
+          "Draft plan. Forecast river matches still need checking.",
+          warningFeed ? "Met Éireann warnings checked." : "Met Éireann warning feed unavailable.",
           `Proposed crew assignments: ${crews.join(" | ")}.`,
           mallowRestricted ? "Mallow crew is limited to Mallow." : ""
         ].filter(Boolean).join(" ");
