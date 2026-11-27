@@ -9,13 +9,17 @@
   <p>AI can make mistakes. A person makes the final decision.</p>
 
   <button id="read-sheet">Read Team Sheet</button>
-  <pre id="sheet-result"></pre>
+  <pre id="sheet-result" aria-live="polite"></pre>
+
+  <button id="read-forecast">Read Clonmel forecast</button>
+  <pre id="forecast-result" aria-live="polite"></pre>
 
   <script>
     const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRzRzb8gYXBbq8OC8dYXUUM_dhR0NmwN9A1Jyfoefp24GNND6yioToO1-lpU9Lj0_IGtmp2rD-e8m5u/pub?gid=1043010851&single=true&output=csv";
-    const result = document.querySelector("#sheet-result");
+    const forecastUrl = "https://flood-api.open-meteo.com/v1/flood?latitude=52.351525&longitude=-7.694598&daily=river_discharge&forecast_days=3&timezone=GMT";
 
     document.querySelector("#read-sheet").addEventListener("click", async () => {
+      const result = document.querySelector("#sheet-result");
       result.textContent = "Reading Google Sheets…";
       try {
         const response = await fetch(sheetUrl, { cache: "no-store" });
@@ -23,6 +27,29 @@
         result.textContent = await response.text();
       } catch {
         result.textContent = "Couldn’t read the Team Sheet. Please try again.";
+      }
+    });
+
+    document.querySelector("#read-forecast").addEventListener("click", async () => {
+      const result = document.querySelector("#forecast-result");
+      result.textContent = "Reading the forecast…";
+      try {
+        const response = await fetch(forecastUrl, { cache: "no-store" });
+        if (!response.ok) throw new Error("Forecast request failed");
+
+        const forecast = await response.json();
+        const { time: dates, river_discharge: flows } = forecast.daily;
+        if (dates.length !== 3 || flows.length !== 3 || !flows.every(Number.isFinite)) {
+          throw new Error("Incomplete forecast");
+        }
+
+        const lines = dates.map((date, i) => `${date}: ${flows[i]} m³/s`);
+        lines.push(`Three-day peak: ${Math.max(...flows)} m³/s`);
+        lines.push(`Model point: ${forecast.latitude}, ${forecast.longitude}`);
+        lines.push("Source: Open-Meteo / Copernicus GloFAS. Suir match pending.");
+        result.textContent = lines.join("\n");
+      } catch {
+        result.textContent = "A complete three-day forecast is unavailable.";
       }
     });
   </script>
