@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>River Watch</title>
   <style>
-    body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; font: 1rem/1.5 system-ui, sans-serif; }
+    body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem;
+           font-family: system-ui, sans-serif; line-height: 1.5; }
     button { padding: 0.5rem 0.75rem; font: inherit; cursor: pointer; }
     pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   </style>
@@ -24,5 +25,119 @@
 
   <script>
     const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRzRzb8gYXBbq8OC8dYXUUM_dhR0NmwN9A1Jyfoefp24GNND6yioToO1-lpU9Lj0_IGtmp2rD-e8m5u/pub?gid=1043010851&single=true&output=csv";
-    const forecastUrl = "https://flood-api.open-meteo.com/v1/flood?latitude=52.351525&longitude=-7.694598&daily=river
-      
+    const forecastUrl = "https://flood-api.open-meteo.com/v1/flood?latitude=52.351525&longitude=-7.694598&daily=river_discharge&forecast_days=3&timezone=GMT";
+    const p95 = 150.17;
+    const p99 = 195.77;
+
+    async function read(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      return response;
+    }
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = "";
+      for (const [token] of text.replace(/^\uFEFF/, "").matchAll(
+        /"(?:[^"]|"")*"|[^",\r\n]+|,|\r\n|\r|\n/g
+      )) {
+        if (token === ",") {
+          row.push(field);
+          field = "";
+        } else if (/^[\r\n]/.test(token)) {
+          rows.push([...row, field]);
+          row = [];
+          field = "";
+        } else {
+          field += token.startsWith('"')
+            ? token.slice(1, -1).replaceAll('""', '"')
+            : token;
+        }
+      }
+      if (row.length || field) rows.push([...row, field]);
+      return rows;
+    }
+
+    document.querySelector("#read-sheet").addEventListener("click", async () => {
+      const result = document.querySelector("#sheet-result");
+      result.textContent = "Reading Google Sheets…";
+      try {
+        result.textContent = await (await read(sheetUrl)).text();
+      } catch {
+        result.textContent = "Couldn’t read the Team Sheet. Please try again.";
+      }
+    });
+
+    document.querySelector("#read-forecast").addEventListener("click", async () => {
+      const result = document.querySelector("#forecast-result");
+      result.textContent = "Reading the Team Sheet and forecast…";
+
+      try {
+        const [sheet, forecastRead] = await Promise.allSettled([
+          read(sheetUrl).then(response => response.text()),
+          read(forecastUrl).then(response => response.json())
+        ]);
+
+        if (sheet.status !== "fulfilled") throw new Error("Team Sheet unavailable.");
+
+        const [headers, ...rows] = parseCsv(sheet.value);
+        const townColumn = headers?.indexOf("town") ?? -1;
+        const overrideColumn = headers?.indexOf("flow_override_m3s") ?? -1;
+        const notesColumn = headers?.indexOf("notes") ?? -1;
+        const clonmel = rows.find(row => row[townColumn]?.trim() === "Clonmel");
+        if (!clonmel || overrideColumn < 0 || notesColumn < 0) {
+          throw new Error("Couldn’t find Clonmel’s override and notes in the Team Sheet.");
+        }
+
+        const overrideText = clonmel[overrideColumn]?.trim() ?? "";
+        const hasOverride = overrideText !== "";
+        const override = Number(overrideText);
+        if (hasOverride && (!Number.isFinite(override) || override < 0)) {
+          throw new Error("Clonmel’s flow override must be a non-negative number.");
+        }
+
+        const forecast = forecastRead.value;
+        const dates = forecast?.daily?.time;
+        const flows = forecast?.daily?.river_discharge;
+        const completeForecast = dates?.length === 3 &&
+          flows?.length === 3 && flows.every(Number.isFinite);
+
+        if (!hasOverride && !completeForecast) {
+          throw new Error("No complete three-day forecast or rehearsal override is available.");
+        }
+
+        const lines = [];
+        let peak;
+        if (completeForecast) {
+          peak = Math.max(...flows);
+          lines.push(...dates.map((date, i) => `${date}: ${flows[i]} m³/s`));
+          lines.push(`Forecast peak: ${peak} m³/s on ${dates[flows.indexOf(peak)]}`);
+          lines.push("Forecast source: Open-Meteo / Copernicus GloFAS");
+          lines.push(`Model point: ${forecast.latitude}, ${forecast.longitude}`);
+        } else {
+          lines.push("Live forecast unavailable. Using the Sheet rehearsal value.");
+        }
+
+        const flowUsed = hasOverride ? override : peak;
+        const level = flowUsed >= p99 ? "Barriers" : flowUsed >= p95 ? "Standby" : "Normal";
+        const reason = level === "Barriers" ? `at or above P99 (${p99} m³/s)`
+          : level === "Standby" ? `at or above P95 (${p95} m³/s) and below P99`
+          : `below P95 (${p95} m³/s)`;
+
+        lines.push(
+          "",
+          `Flow used: ${flowUsed} m³/s (${hasOverride ? "rehearsal override from Team Sheet I2" : "live forecast peak"})`,
+          `Team Sheet note: ${clonmel[notesColumn]?.trim() || "None recorded"}`,
+          `OPW gauge 16011, 2016–2025: P95 ${p95}, P99 ${p99} m³/s`,
+          `Base level: ${level}. The flow used is ${reason}.`,
+          "Final plan pending Suir verification, warning checks and crew allocation."
+        );
+        result.textContent = lines.join("\n");
+      } catch (error) {
+        result.textContent = `Clonmel level could not be calculated. ${error.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
