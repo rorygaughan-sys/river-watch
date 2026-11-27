@@ -5,10 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>River Watch</title>
   <style>
-    body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem;
-           font-family: system-ui, sans-serif; line-height: 1.5; }
-    button { padding: 0.5rem 0.75rem; font: inherit; cursor: pointer; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    body {
+      max-width: 52rem;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+    }
+    button {
+      padding: 0.5rem 0.75rem;
+      font: inherit;
+      cursor: pointer;
+    }
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
   </style>
 </head>
 <body>
@@ -39,6 +51,7 @@
       const rows = [];
       let row = [];
       let field = "";
+
       for (const [token] of text.replace(/^\uFEFF/, "").matchAll(
         /"(?:[^"]|"")*"|[^",\r\n]+|,|\r\n|\r|\n/g
       )) {
@@ -55,6 +68,7 @@
             : token;
         }
       }
+
       if (row.length || field) rows.push([...row, field]);
       return rows;
     }
@@ -62,6 +76,7 @@
     document.querySelector("#read-sheet").addEventListener("click", async () => {
       const result = document.querySelector("#sheet-result");
       result.textContent = "Reading Google Sheets…";
+
       try {
         result.textContent = await (await read(sheetUrl)).text();
       } catch {
@@ -79,13 +94,16 @@
           read(forecastUrl).then(response => response.json())
         ]);
 
-        if (sheet.status !== "fulfilled") throw new Error("Team Sheet unavailable.");
+        if (sheet.status !== "fulfilled") {
+          throw new Error("Team Sheet unavailable.");
+        }
 
         const [headers, ...rows] = parseCsv(sheet.value);
         const townColumn = headers?.indexOf("town") ?? -1;
         const overrideColumn = headers?.indexOf("flow_override_m3s") ?? -1;
         const notesColumn = headers?.indexOf("notes") ?? -1;
         const clonmel = rows.find(row => row[townColumn]?.trim() === "Clonmel");
+
         if (!clonmel || overrideColumn < 0 || notesColumn < 0) {
           throw new Error("Couldn’t find Clonmel’s override and notes in the Team Sheet.");
         }
@@ -93,6 +111,7 @@
         const overrideText = clonmel[overrideColumn]?.trim() ?? "";
         const hasOverride = overrideText !== "";
         const override = Number(overrideText);
+
         if (hasOverride && (!Number.isFinite(override) || override < 0)) {
           throw new Error("Clonmel’s flow override must be a non-negative number.");
         }
@@ -109,6 +128,7 @@
 
         const lines = [];
         let peak;
+
         if (completeForecast) {
           peak = Math.max(...flows);
           lines.push(...dates.map((date, i) => `${date}: ${flows[i]} m³/s`));
@@ -133,6 +153,7 @@
           `Base level: ${level}. The flow used is ${reason}.`,
           "Final plan pending Suir verification, warning checks and crew allocation."
         );
+
         result.textContent = lines.join("\n");
       } catch (error) {
         result.textContent = `Clonmel level could not be calculated. ${error.message}`;
