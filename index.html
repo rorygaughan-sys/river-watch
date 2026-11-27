@@ -2,25 +2,57 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>River Watch</title>
+  <style>
+    body {
+      max-width: 52rem;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+    }
+
+    button {
+      padding: 0.5rem 0.75rem;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+  </style>
 </head>
 <body>
   <h1>River Watch</h1>
   <p>AI can make mistakes. A person makes the final decision.</p>
 
-  <button id="read-sheet">Read Team Sheet</button>
-  <pre id="sheet-result" aria-live="polite"></pre>
+  <section>
+    <h2>Team Sheet</h2>
+    <button id="read-sheet">Read Team Sheet</button>
+    <pre id="sheet-result" aria-live="polite"></pre>
+  </section>
 
-  <button id="read-forecast">Read Clonmel forecast</button>
-  <pre id="forecast-result" aria-live="polite"></pre>
+  <section>
+    <h2>Clonmel forecast</h2>
+    <button id="read-forecast">Read Clonmel forecast</button>
+    <pre id="forecast-result" aria-live="polite"></pre>
+  </section>
 
   <script>
     const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRzRzb8gYXBbq8OC8dYXUUM_dhR0NmwN9A1Jyfoefp24GNND6yioToO1-lpU9Lj0_IGtmp2rD-e8m5u/pub?gid=1043010851&single=true&output=csv";
     const forecastUrl = "https://flood-api.open-meteo.com/v1/flood?latitude=52.351525&longitude=-7.694598&daily=river_discharge&forecast_days=3&timezone=GMT";
 
+    // Stored historical thresholds from OPW Clonmel gauge 16011, 2016–2025.
+    const p95 = 150.17;
+    const p99 = 195.77;
+
     document.querySelector("#read-sheet").addEventListener("click", async () => {
       const result = document.querySelector("#sheet-result");
       result.textContent = "Reading Google Sheets…";
+
       try {
         const response = await fetch(sheetUrl, { cache: "no-store" });
         if (!response.ok) throw new Error("Sheet request failed");
@@ -33,23 +65,45 @@
     document.querySelector("#read-forecast").addEventListener("click", async () => {
       const result = document.querySelector("#forecast-result");
       result.textContent = "Reading the forecast…";
+
       try {
         const response = await fetch(forecastUrl, { cache: "no-store" });
         if (!response.ok) throw new Error("Forecast request failed");
 
         const forecast = await response.json();
-        const { time: dates, river_discharge: flows } = forecast.daily;
-        if (dates.length !== 3 || flows.length !== 3 || !flows.every(Number.isFinite)) {
-          throw new Error("Incomplete forecast");
+        const dates = forecast.daily?.time;
+        const flows = forecast.daily?.river_discharge;
+        if (dates?.length !== 3 || flows?.length !== 3 || !flows.every(Number.isFinite)) {
+          throw new Error("Incomplete three-day forecast");
         }
 
-        const lines = dates.map((date, i) => `${date}: ${flows[i]} m³/s`);
-        lines.push(`Three-day peak: ${Math.max(...flows)} m³/s`);
-        lines.push(`Model point: ${forecast.latitude}, ${forecast.longitude}`);
-        lines.push("Source: Open-Meteo / Copernicus GloFAS. Suir match pending.");
+        const peak = Math.max(...flows);
+        const peakDate = dates[flows.indexOf(peak)];
+        const baseLevel = peak >= p99 ? "Barriers" : peak >= p95 ? "Standby" : "Normal";
+
+        let reason = `The peak is below P95 (${p95} m³/s).`;
+        if (baseLevel === "Barriers") {
+          reason = `The peak is at or above P99 (${p99} m³/s).`;
+        } else if (baseLevel === "Standby") {
+          reason = `The peak is at or above P95 (${p95} m³/s) and below P99 (${p99} m³/s).`;
+        }
+
+        const lines = [
+          ...dates.map((date, i) => `${date}: ${flows[i]} m³/s`),
+          "",
+          `Three-day peak: ${peak} m³/s on ${peakDate}`,
+          "Forecast source: Open-Meteo / Copernicus GloFAS",
+          `Forecast model point: ${forecast.latitude}, ${forecast.longitude}`,
+          `Historical source: OPW Clonmel gauge 16011, 2016–2025`,
+          `Historical thresholds: P95 ${p95} m³/s, P99 ${p99} m³/s`,
+          "",
+          `Base level: ${baseLevel} — ${reason}`,
+          "Final level pending Suir verification, Met Éireann warnings and Sheet overrides."
+        ];
+
         result.textContent = lines.join("\n");
       } catch {
-        result.textContent = "A complete three-day forecast is unavailable.";
+        result.textContent = "A complete three-day forecast is unavailable. Base level could not be calculated.";
       }
     });
   </script>
