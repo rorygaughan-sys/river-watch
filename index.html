@@ -7,5 +7,24 @@
 <body>
   <h1>River Watch</h1>
   <p>AI can make mistakes. A person makes the final decision.</p>
+
+  <button id="read-sheet">Read Team Sheet</button>
+  <pre id="sheet-result"></pre>
+
+  <script>
+    const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRzRzb8gYXBbq8OC8dYXUUM_dhR0NmwN9A1Jyfoefp24GNND6yioToO1-lpU9Lj0_IGtmp2rD-e8m5u/pub?gid=1043010851&single=true&output=csv";
+    const result = document.querySelector("#sheet-result");
+
+    document.querySelector("#read-sheet").addEventListener("click", async () => {
+      result.textContent = "Reading Google Sheets…";
+      try {
+        const response = await fetch(sheetUrl, { cache: "no-store" });
+        if (!response.ok) throw new Error("Sheet request failed");
+        result.textContent = await response.text();
+      } catch {
+        result.textContent = "Couldn’t read the Team Sheet. Please try again.";
+      }
+    });
+  </script>
 </body>
 </html>
