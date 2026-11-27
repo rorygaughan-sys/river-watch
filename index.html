@@ -5,45 +5,67 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>River Watch</title>
   <style>
-    body {
-      max-width: 52rem;
-      margin: 2rem auto;
-      padding: 0 1rem;
-      font-family: system-ui, sans-serif;
-      line-height: 1.5;
-    }
-    button {
-      padding: 0.5rem 0.75rem;
-      font: inherit;
-      cursor: pointer;
-    }
-    pre {
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
+    body { max-width: 75rem; margin: 2rem auto; padding: 0 1rem;
+           font-family: system-ui, sans-serif; line-height: 1.5; }
+    button { padding: .55rem .85rem; font: inherit; cursor: pointer; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; vertical-align: top; padding: .65rem;
+             border-bottom: 1px solid #ccc; }
+    td, pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   </style>
 </head>
 <body>
   <h1>River Watch</h1>
   <p>AI can make mistakes. A person makes the final decision.</p>
 
+  <h2>Tonight’s plan</h2>
+  <button id="plan-button">What is tonight’s plan?</button>
+  <p id="plan-status" role="status"></p>
+  <div class="table-wrap">
+    <table id="plan-table" hidden>
+      <thead>
+        <tr>
+          <th scope="col">Town</th>
+          <th scope="col">Draft level</th>
+          <th scope="col">Working</th>
+          <th scope="col">Proposed action</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
   <h2>Team Sheet</h2>
-  <button id="read-sheet">Read Team Sheet</button>
+  <button id="sheet-button">Read Team Sheet</button>
   <pre id="sheet-result" aria-live="polite"></pre>
 
   <h2>Clonmel forecast</h2>
-  <button id="read-forecast">Read Clonmel forecast</button>
-  <pre id="forecast-result" aria-live="polite"></pre>
+  <button id="clonmel-button">Read Clonmel forecast</button>
+  <pre id="clonmel-result" aria-live="polite"></pre>
 
   <script>
     const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRzRzb8gYXBbq8OC8dYXUUM_dhR0NmwN9A1Jyfoefp24GNND6yioToO1-lpU9Lj0_IGtmp2rD-e8m5u/pub?gid=1043010851&single=true&output=csv";
-    const forecastUrl = "https://flood-api.open-meteo.com/v1/flood?latitude=52.351525&longitude=-7.694598&daily=river_discharge&forecast_days=3&timezone=GMT";
-    const p95 = 150.17;
-    const p99 = 195.77;
+
+    // Forecast request coordinates and stored OPW history for 2016–2025.
+    // Columns: town, latitude, longitude, OPW station, P95, P99, readings.
+    const towns = [
+      ["Clonmel", 52.351525, -7.694598, "16011", 150.17, 195.77, 3522],
+      ["Fermoy", 52.138568, -8.276634, "18107", 153.50, 254.67, 3579],
+      ["Mallow", 52.132340, -8.641608, "18003", 107.88, 175.47, 3406],
+      ["Bandon", 51.746954, -8.731538, "20001", 42.49, 83.45, 784],
+      ["Enniscorthy", 52.502307, -6.566852, "12001", 65.09, 100.31, 3614],
+      ["Ennis", 52.846674, -8.981789, "27002", 32.09, 41.71, 3641],
+      ["Athlone", 53.421534, -7.940756, "26027", 243.21, 307.93, 3516],
+      ["Carrick-on-Shannon", 53.943210, -8.095559, "26085", 96.13, 116.09, 987]
+    ];
+
+    const levels = ["Normal", "Standby", "Barriers"];
+    const standby = "Confirm staff on call, check pumps and stage sandbags.";
 
     async function read(url) {
       const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      if (!response.ok) throw new Error(`Request failed (${response.status}).`);
       return response;
     }
 
@@ -73,90 +95,228 @@
       return rows;
     }
 
-    document.querySelector("#read-sheet").addEventListener("click", async () => {
-      const result = document.querySelector("#sheet-result");
-      result.textContent = "Reading Google Sheets…";
+    async function readTeam() {
+      const csv = await (await read(sheetUrl)).text();
+      const [headers, ...rows] = parseCsv(csv);
+      const required = ["town", "barrier_sets", "flow_override_m3s",
+                        "warning_override", "notes"];
+      if (!required.every(header => headers?.includes(header))) {
+        throw new Error("Required Team Sheet columns are missing.");
+      }
 
+      return new Map(rows.map(cells => {
+        const row = Object.fromEntries(
+          headers.map((header, index) => [header, cells[index] ?? ""])
+        );
+        return [row.town.trim(), row];
+      }));
+    }
+
+    async function readForecast(town) {
+      const [, latitude, longitude] = town;
+      const url = new URL("https://flood-api.open-meteo.com/v1/flood");
+      url.search = new URLSearchParams({
+        latitude, longitude, daily: "river_discharge",
+        forecast_days: "3", timezone: "GMT"
+      });
+
+      const forecast = await (await read(url)).json();
+      const { time: dates, river_discharge: flows } = forecast.daily ?? {};
+      if (dates?.length !== 3 || flows?.length !== 3 ||
+          !flows.every(flow => Number.isFinite(flow) && flow >= 0)) {
+        throw new Error("A complete three-day forecast is unavailable.");
+      }
+
+      const peak = Math.max(...flows);
+      return {
+        peak,
+        date: dates[flows.indexOf(peak)],
+        point: `${forecast.latitude}, ${forecast.longitude}`,
+        daily: dates.map((date, index) => `${date}: ${flows[index]} m³/s`)
+      };
+    }
+
+    function calculate(town, row, forecast) {
+      const [name, , , gauge, p95, p99, readings] = town;
+      const working = [
+        `OPW gauge ${gauge}, 2016–2025: P95 ${p95}, P99 ${p99} m³/s`,
+        `History coverage: ${readings.toLocaleString("en-IE")} of 3,653 days`
+      ];
+      if (name === "Bandon" || name === "Carrick-on-Shannon") {
+        working.push("Several years are missing. Thresholds are provisional.");
+      }
+      if (forecast) {
+        working.push(
+          ...forecast.daily,
+          `Open-Meteo / Copernicus GloFAS peak: ${forecast.peak} m³/s on ${forecast.date} (GMT)`,
+          `Model point: ${forecast.point}. River match pending.`
+        );
+      } else {
+        working.push("Live forecast unavailable.");
+      }
+      if (!row) return { name, working: [...working, "Team Sheet row unavailable."] };
+
+      working.push(`Google Team Sheet note: ${row.notes || "None recorded"}`);
+      const entered = row.flow_override_m3s.trim();
+      const flow = entered ? Number(entered) : forecast?.peak;
+      const warning = row.warning_override.trim().toLowerCase();
+      const raised = warning === "orange" || warning === "red";
+
+      if (raised) working.push(`Google Team Sheet rehearsal warning: ${warning}.`);
+      if (!Number.isFinite(flow) || flow < 0) {
+        working.push(entered ? "Invalid Sheet flow override." : "No usable flow value.");
+        return { name, working };
+      }
+
+      const base = flow >= p99 ? 2 : flow >= p95 ? 1 : 0;
+      const level = Math.min(2, base + Number(raised));
+      const reason = ["below P95", "at or above P95 and below P99", "at or above P99"][base];
+
+      working.push(
+        `Flow used: ${flow} m³/s (${entered ? "rehearsal override from Google Team Sheet" : "forecast peak"})`,
+        `Base level: ${levels[base]}. The flow is ${reason}.`,
+        raised
+          ? `Rehearsal warning rule: ${levels[base]} → ${levels[level]}.`
+          : "Live Met Éireann warning check pending."
+      );
+
+      const availableSets = Number(row.barrier_sets);
+      const hasBarrierSet = availableSets > 0 && !/barrier set.*on loan/i.test(row.notes);
+      if (level === 2) {
+        working.push(`Barrier sets recorded in Google Team Sheet: ${row.barrier_sets || "unknown"}.`);
+      }
+
+      return { name, row, flow, p99, level, hasBarrierSet, working };
+    }
+
+    function assignCrews(results, team) {
+      const mallow = team.get("Mallow");
+      const mallowRestricted = !mallow || /mallow only|van in repair/i.test(mallow.notes);
+      const areas = {
+        Clonmel: ["Clonmel", "Fermoy", "Enniscorthy"],
+        Mallow: mallowRestricted ? ["Mallow"] : ["Mallow", "Fermoy", "Bandon"],
+        Athlone: ["Athlone", "Carrick-on-Shannon", "Ennis"]
+      };
+      const jobs = { Clonmel: [], Mallow: [], Athlone: [] };
+      const assignments = new Map();
+      const candidates = results.filter(result => result.level === 2 && result.hasBarrierSet);
+      candidates.sort((a, b) => (b.flow / b.p99 - a.flow / a.p99) || b.flow - a.flow);
+
+      function assign(town, visited) {
+        for (const [crew, area] of Object.entries(areas)) {
+          if (!area.includes(town) || visited.has(crew)) continue;
+          visited.add(crew);
+          const crewJobs = jobs[crew];
+
+          if (crewJobs.length < 2) {
+            crewJobs.push(town);
+            assignments.set(town, crew);
+            return true;
+          }
+
+          for (const [index, earlierTown] of crewJobs.entries()) {
+            if (assign(earlierTown, visited)) {
+              crewJobs[index] = town;
+              assignments.set(town, crew);
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+
+      for (const candidate of candidates) assign(candidate.name, new Set());
+      return { assignments, jobs, mallowRestricted };
+    }
+
+    function proposedAction(result, assignments) {
+      if (result.level === undefined) return "Check the missing inputs.";
+      if (result.level === 0) return "Continue routine monitoring.";
+      if (result.level === 1) return standby;
+
+      const crew = assignments.get(result.name);
+      if (crew) return `${crew} crew to erect barriers before 18:00.`;
+
+      const reason = result.hasBarrierSet
+        ? "No eligible crew is available."
+        : "No barrier set is available.";
+      return `${reason} ${standby} Flag to the Area Manager.`;
+    }
+
+    document.querySelector("#sheet-button").addEventListener("click", async () => {
+      const result = document.querySelector("#sheet-result");
+      result.textContent = "Reading the Team Sheet…";
       try {
         result.textContent = await (await read(sheetUrl)).text();
       } catch {
-        result.textContent = "Couldn’t read the Team Sheet. Please try again.";
+        result.textContent = "Couldn’t read the Team Sheet.";
       }
     });
 
-    document.querySelector("#read-forecast").addEventListener("click", async () => {
-      const result = document.querySelector("#forecast-result");
-      result.textContent = "Reading the Team Sheet and forecast…";
+    document.querySelector("#clonmel-button").addEventListener("click", async () => {
+      const output = document.querySelector("#clonmel-result");
+      output.textContent = "Reading the Team Sheet and Clonmel forecast…";
 
       try {
-        const [sheet, forecastRead] = await Promise.allSettled([
-          read(sheetUrl).then(response => response.text()),
-          read(forecastUrl).then(response => response.json())
+        const [team, forecast] = await Promise.all([
+          readTeam(),
+          readForecast(towns[0]).catch(() => null)
         ]);
-
-        if (sheet.status !== "fulfilled") {
-          throw new Error("Team Sheet unavailable.");
-        }
-
-        const [headers, ...rows] = parseCsv(sheet.value);
-        const townColumn = headers?.indexOf("town") ?? -1;
-        const overrideColumn = headers?.indexOf("flow_override_m3s") ?? -1;
-        const notesColumn = headers?.indexOf("notes") ?? -1;
-        const clonmel = rows.find(row => row[townColumn]?.trim() === "Clonmel");
-
-        if (!clonmel || overrideColumn < 0 || notesColumn < 0) {
-          throw new Error("Couldn’t find Clonmel’s override and notes in the Team Sheet.");
-        }
-
-        const overrideText = clonmel[overrideColumn]?.trim() ?? "";
-        const hasOverride = overrideText !== "";
-        const override = Number(overrideText);
-
-        if (hasOverride && (!Number.isFinite(override) || override < 0)) {
-          throw new Error("Clonmel’s flow override must be a non-negative number.");
-        }
-
-        const forecast = forecastRead.value;
-        const dates = forecast?.daily?.time;
-        const flows = forecast?.daily?.river_discharge;
-        const completeForecast = dates?.length === 3 &&
-          flows?.length === 3 && flows.every(Number.isFinite);
-
-        if (!hasOverride && !completeForecast) {
-          throw new Error("No complete three-day forecast or rehearsal override is available.");
-        }
-
-        const lines = [];
-        let peak;
-
-        if (completeForecast) {
-          peak = Math.max(...flows);
-          lines.push(...dates.map((date, i) => `${date}: ${flows[i]} m³/s`));
-          lines.push(`Forecast peak: ${peak} m³/s on ${dates[flows.indexOf(peak)]}`);
-          lines.push("Forecast source: Open-Meteo / Copernicus GloFAS");
-          lines.push(`Model point: ${forecast.latitude}, ${forecast.longitude}`);
-        } else {
-          lines.push("Live forecast unavailable. Using the Sheet rehearsal value.");
-        }
-
-        const flowUsed = hasOverride ? override : peak;
-        const level = flowUsed >= p99 ? "Barriers" : flowUsed >= p95 ? "Standby" : "Normal";
-        const reason = level === "Barriers" ? `at or above P99 (${p99} m³/s)`
-          : level === "Standby" ? `at or above P95 (${p95} m³/s) and below P99`
-          : `below P95 (${p95} m³/s)`;
-
-        lines.push(
-          "",
-          `Flow used: ${flowUsed} m³/s (${hasOverride ? "rehearsal override from Team Sheet I2" : "live forecast peak"})`,
-          `Team Sheet note: ${clonmel[notesColumn]?.trim() || "None recorded"}`,
-          `OPW gauge 16011, 2016–2025: P95 ${p95}, P99 ${p99} m³/s`,
-          `Base level: ${level}. The flow used is ${reason}.`,
-          "Final plan pending Suir verification, warning checks and crew allocation."
-        );
-
-        result.textContent = lines.join("\n");
+        const result = calculate(towns[0], team.get("Clonmel"), forecast);
+        output.textContent = [
+          ...result.working,
+          `Draft level: ${levels[result.level] ?? "Undetermined"}`
+        ].join("\n");
       } catch (error) {
-        result.textContent = `Clonmel level could not be calculated. ${error.message}`;
+        output.textContent = `Couldn’t calculate Clonmel’s level. ${error.message}`;
+      }
+    });
+
+    document.querySelector("#plan-button").addEventListener("click", async event => {
+      const button = event.currentTarget;
+      const status = document.querySelector("#plan-status");
+      const table = document.querySelector("#plan-table");
+      const body = table.tBodies[0];
+
+      button.disabled = true;
+      table.hidden = true;
+      body.replaceChildren();
+      status.textContent = "Reading the Team Sheet and forecasts for eight towns…";
+
+      try {
+        const [team, forecasts] = await Promise.all([
+          readTeam(),
+          Promise.allSettled(towns.map(readForecast))
+        ]);
+        const results = towns.map((town, index) =>
+          calculate(town, team.get(town[0]), forecasts[index].value)
+        );
+        const { assignments, jobs, mallowRestricted } = assignCrews(results);
+
+        for (const result of results) {
+          const row = body.insertRow();
+          for (const value of [
+            result.name,
+            levels[result.level] ?? "Undetermined",
+            result.working.join("\n"),
+            proposedAction(result, assignments)
+          ]) {
+            row.insertCell().textContent = value;
+          }
+        }
+
+        const crews = Object.entries(jobs)
+          .map(([crew, assigned]) => `${crew}: ${assigned.join(", ") || "none"}`);
+        status.textContent = [
+          "Draft plan. Forecast river matches and live Met Éireann warnings still need checking.",
+          `Proposed crew assignments: ${crews.join(" | ")}.`,
+          mallowRestricted ? "Mallow crew is limited to Mallow." : ""
+        ].filter(Boolean).join(" ");
+        table.hidden = false;
+      } catch (error) {
+        status.textContent = `Couldn’t build the draft plan. ${error.message}`;
+      } finally {
+        button.disabled = false;
       }
     });
   </script>
