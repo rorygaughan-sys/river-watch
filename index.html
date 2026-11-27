@@ -5,59 +5,124 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>River Watch</title>
   <style>
-    body { max-width: 75rem; margin: 2rem auto; padding: 0 1rem;
-           font-family: system-ui, sans-serif; line-height: 1.5; }
-    button { padding: .55rem .85rem; font: inherit; cursor: pointer; }
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #12322d; background: #eaf3ed; }
+    * { box-sizing: border-box; }
+    body { margin: 0; line-height: 1.55; }
+    .shell { width: min(75rem, calc(100% - 2rem)); margin-inline: auto; }
+    .hero { color: #fff; padding: clamp(3rem, 9vw, 7rem) 0 2rem; background:
+      linear-gradient(90deg, rgba(6, 34, 30, .95), rgba(6, 34, 30, .77) 55%, rgba(6, 34, 30, .35)),
+      url("https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Sir_Thomas_Bridge_over_the_River_Suir%2C_E_of_Clonmel_-_geograph.org.uk_-_6008286.jpg/1280px-Sir_Thomas_Bridge_over_the_River_Suir%2C_E_of_Clonmel_-_geograph.org.uk_-_6008286.jpg") center 50% / cover no-repeat #103e34; }
+    .hero h1 { margin: 0; font-size: clamp(3rem, 9vw, 6rem); line-height: 1; letter-spacing: -.07em; }
+    .hero p { max-width: 35rem; margin: 1rem 0 2rem; font-size: 1.13rem; }
+    .photo { display: inline-block; padding: .28rem .55rem; border-radius: .4rem; background: #102c27; color: white; font-size: .8rem; }
+    .photo a { color: inherit; }
+    main { padding: 1.4rem 0 3rem; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(14rem, .42fr); gap: 1rem; align-items: start; }
+    .card { background: #fff; border: 1px solid #c9ddd2; border-radius: 1rem; padding: clamp(1rem, 3vw, 1.65rem); margin-bottom: 1rem; min-width: 0; }
+    .plan { grid-column: 1 / -1; margin-bottom: 0; border-top: .32rem solid #1d8468; }
+    .safety { order: 2; background: #fff4d4; border-color: #e7ca80; }
+    .safety ul { padding-left: 1.15rem; margin-bottom: 0; }
+    .safety li + li { margin-top: .55rem; }
+    h2 { margin: 0 0 .55rem; font-size: clamp(1.3rem, 3vw, 1.7rem); letter-spacing: -.025em; }
+    p { margin: .55rem 0 .9rem; }
+    button, input { font: inherit; }
+    button { border: 1px solid #aecdc0; border-radius: .55rem; padding: .55rem .8rem; color: #123b31; background: #edf8f2; cursor: pointer; }
+    button:hover { background: #d9f0e4; }
+    button.primary { background: #11614d; border-color: #11614d; color: #fff; font-weight: 650; }
+    button.primary:hover { background: #0a4939; }
+    button:disabled { opacity: .6; cursor: wait; }
+    :focus-visible { outline: 3px solid #1669b1; outline-offset: 3px; }
+    input { border: 1px solid #9ebeb0; border-radius: .5rem; padding: .6rem .7rem; width: 100%; min-width: 0; }
+    label, summary { font-weight: 650; }
+    summary { cursor: pointer; }
+    form { margin-top: 1rem; }
+    .input-row { display: flex; gap: .55rem; margin-top: .3rem; }
+    .examples { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
+    .examples button { font-size: .82rem; padding: .3rem .55rem; }
+    #plan-status:not(:empty), #answer:not(:empty) { padding: .75rem; border-radius: .55rem; background: #eaf6f0; }
     .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; vertical-align: top; padding: .65rem;
-             border-bottom: 1px solid #ccc; }
-    td, pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    table { width: 100%; min-width: 36rem; border-collapse: collapse; }
+    th, td { text-align: left; vertical-align: top; padding: .7rem; border-bottom: 1px solid #d7e5de; }
+    thead { background: #e6f3eb; }
+    tbody tr:nth-child(even) { background: #f5faf7; }
+    .level { display: inline-block; border-radius: 99px; padding: .15rem .5rem; font-size: .85rem; font-weight: 700; white-space: nowrap; background: #e9edeb; }
+    .level-normal { background: #d8f1e0; color: #15522e; }
+    .level-standby { background: #fff0b8; color: #664500; }
+    .level-barriers { background: #f9d9d6; color: #842820; }
+    .working { min-width: 11rem; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+    .diagnostics { margin-top: 1rem; }
+    .diagnostics h2 { margin-top: 1rem; font-size: 1.15rem; }
+    @media (max-width: 46rem) { .layout { grid-template-columns: minmax(0, 1fr); } .hero { background-position: 62% 50%; } }
   </style>
 </head>
 <body>
-  <h1>River Watch</h1>
-  <p>AI can make mistakes. A person makes the final decision.</p>
-
-  <h2>Ask River Watch</h2>
-  <details>
-    <summary>OpenAI settings</summary>
-    <p>Enter your own OpenAI API key for this visit. It is cleared when you reload.</p>
-    <label for="api-key">OpenAI API key</label>
-    <input id="api-key" type="password" autocomplete="off">
-    <button id="forget-key" type="button">Forget key</button>
-  </details>
-  <form id="question-form">
-    <label for="question">Your question</label>
-    <input id="question" size="45" maxlength="600" required>
-    <button type="submit">Ask</button>
-  </form>
-  <pre id="answer" aria-live="polite"></pre>
-
-  <h2>Tonight’s plan</h2>
-  <button id="plan-button">What is tonight’s plan?</button>
-  <p id="plan-status" role="status"></p>
-  <div class="table-wrap">
-    <table id="plan-table" hidden>
-      <thead>
-        <tr>
-          <th scope="col">Town</th>
-          <th scope="col">Draft level</th>
-          <th scope="col">Working</th>
-          <th scope="col">Proposed action</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-
-  <h2>Team Sheet</h2>
-  <button id="sheet-button">Read Team Sheet</button>
-  <pre id="sheet-result" aria-live="polite"></pre>
-
-  <h2>Clonmel forecast</h2>
-  <button id="clonmel-button">Read Clonmel forecast</button>
-  <pre id="clonmel-result" aria-live="polite"></pre>
+  <header class="hero">
+    <div class="shell">
+      <h1>River Watch</h1>
+      <p>Check forecasts, rain warnings and the proposed flood response across eight Irish towns.</p>
+      <small class="photo">River Suir near Clonmel · <a href="https://commons.wikimedia.org/wiki/File:Sir_Thomas_Bridge_over_the_River_Suir,_E_of_Clonmel_-_geograph.org.uk_-_6008286.jpg">Colin Park</a> · <a href="https://creativecommons.org/licenses/by-sa/2.0/">CC BY-SA 2.0</a></small>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="layout">
+      <section class="card plan" aria-labelledby="plan-heading">
+        <h2 id="plan-heading">Tonight’s plan</h2>
+        <button id="plan-button" class="primary">What is tonight’s plan?</button>
+        <p id="plan-status" role="status"></p>
+        <div class="table-wrap">
+          <table id="plan-table" hidden>
+            <thead><tr><th scope="col">Town</th><th scope="col">Draft level</th><th scope="col">Proposed action</th><th scope="col">Working</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="card" aria-labelledby="ask-heading">
+        <h2 id="ask-heading">Ask River Watch</h2>
+        <details>
+          <summary>OpenAI settings</summary>
+          <p>Enter your own OpenAI API key for this visit. It is cleared when you reload.</p>
+          <label for="api-key">OpenAI API key</label>
+          <div class="input-row">
+            <input id="api-key" type="password" autocomplete="off">
+            <button id="forget-key" type="button">Forget key</button>
+          </div>
+        </details>
+        <form id="question-form">
+          <label for="question">Your question</label>
+          <div class="input-row">
+            <input id="question" maxlength="600" required>
+            <button type="submit" class="primary">Ask</button>
+          </div>
+        </form>
+        <div class="examples" aria-label="Example questions">
+          <button type="button" data-question="What is tonight’s plan?">Tonight’s plan</button>
+          <button type="button" data-question="Why is Fermoy at that level?">Why Fermoy?</button>
+          <button type="button" data-question="What if the Suir at Clonmel reaches 150 m³/s?">Clonmel what-if</button>
+          <button type="button" data-question="Which town should be first in line for a flood-defence study?">Study priority</button>
+        </div>
+        <pre id="answer" aria-live="polite"></pre>
+      </section>
+      <aside class="card safety" aria-labelledby="safety-heading">
+        <h2 id="safety-heading">Good data saves lives</h2>
+        <p><strong>AI can make mistakes. A person makes the final decision.</strong></p>
+        <ul>
+          <li>Check the river match and the time of the latest forecast or warning.</li>
+          <li>Ask the duty officer to review crew deployments and decisions to stand down.</li>
+          <li>Use official guidance and the Flood Plan if data is missing.</li>
+        </ul>
+      </aside>
+    </div>
+    <details class="card diagnostics">
+      <summary>Check the data sources</summary>
+      <h2>Team Sheet</h2>
+      <button id="sheet-button">Read Team Sheet</button>
+      <pre id="sheet-result" aria-live="polite"></pre>
+      <h2>Clonmel forecast</h2>
+      <button id="clonmel-button">Read Clonmel forecast</button>
+      <pre id="clonmel-result" aria-live="polite"></pre>
+    </details>
+  </main>
 
   <script>
     const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRzRzb8gYXBbq8OC8dYXUUM_dhR0NmwN9A1Jyfoefp24GNND6yioToO1-lpU9Lj0_IGtmp2rD-e8m5u/pub?gid=1043010851&single=true&output=csv";
@@ -361,14 +426,21 @@
 
         for (const result of results) {
           const row = body.insertRow();
-          for (const value of [
-            result.name,
-            levels[result.level] ?? "Undetermined",
-            result.working.join("\n"),
-            proposedAction(result, assignments)
-          ]) {
-            row.insertCell().textContent = value;
-          }
+          row.insertCell().textContent = result.name;
+          const level = document.createElement("span");
+          const label = levels[result.level] ?? "Undetermined";
+          level.className = `level level-${label.toLowerCase()}`;
+          level.textContent = label;
+          row.insertCell().append(level);
+          row.insertCell().textContent = proposedAction(result, assignments);
+          const details = document.createElement("details");
+          details.className = "working";
+          const summary = document.createElement("summary");
+          summary.textContent = `Show working for ${result.name}`;
+          const lines = document.createElement("pre");
+          lines.textContent = result.working.join("\n");
+          details.append(summary, lines);
+          row.insertCell().append(details);
         }
 
         const crews = Object.entries(jobs)
@@ -484,6 +556,13 @@
         button.disabled = false;
       }
     });
+    for (const example of document.querySelectorAll("[data-question]")) {
+      example.addEventListener("click", () => {
+        const question = document.querySelector("#question");
+        question.value = example.dataset.question;
+        question.focus();
+      });
+    }
   </script>
 </body>
 </html>
